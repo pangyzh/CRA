@@ -6,7 +6,7 @@ def args_parser():
     # basic setting
     parser.add_argument("--name-dataset", type=str, default="mnist",
                         help="dataset for training, 'mnist' or 'cifar' (default: 'mnist')")
-    parser.add_argument("--num_clients", type=int, default=100, help="number of clients: K")
+    parser.add_argument("--num_clients", type=int, default=10, help="number of clients: K")
     parser.add_argument("--rounds", type=int, default=200, help="rounds of training")
     parser.add_argument("--local_epochs", type=int, default=3, help="the number of local epochs: E")
     parser.add_argument("--batch_size", type=int, default=64, help="local batch size: B")
@@ -18,7 +18,7 @@ def args_parser():
     parser.add_argument("--mal_prop", type=float, default=0, 
                         help="proportion of malicious clients (default: 0)")
     parser.add_argument("--attack_type", type=str, default="label_flip",
-                        choices=["none", "label_flip", "gaussian_noise", "sign_flip", "alie", "free_rider"],
+                        choices=["none", "label_flip", "gaussian_noise", "sign_flip", "alie", "free_rider", "min-max"],
                         help="type of byzantine attack")
     parser.add_argument("--alie_eps", type=float, default=0.01, 
                         help="para for ALIE attack")

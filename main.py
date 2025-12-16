@@ -4,13 +4,16 @@ import time
 import pandas as pd
 from torch import nn
 import torchvision as tv
+import numpy as np
+import scipy
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import os
 from datetime import datetime
 from args import args_parser
 from dataloader import get_dataset, CNN_MNIST, CNN_CIFAR
 from clients import LocalUpdate
-from attacker import configure_malicious_clients
-from aggregator import aggregate_fedavg, aggregate_krum, aggregate_fltrust, aggregate_my_algo, aggregate_esfl_ppra,aggregate_priroagg_rfa
+from attacker import configure_malicious_clients, perturb_collusion,poison_minmax
+from aggregator import aggregate_fedavg, aggregate_krum, aggregate_fltrust, aggregate_my_algo, aggregate_my_algo2,aggregate_esfl,aggregate_esfl2, aggregate_priroagg_rfa
 
 def evaluate(net, dataset, args):
     net.eval()
@@ -38,7 +41,7 @@ def main():
         global_model = CNN_MNIST().to(args.device)
     elif args.name_dataset == 'cifar':
         global_model = CNN_CIFAR().to(args.device)
-    global_model.train()
+    # global_model.train()
 
     malicious_users = set()
     if args.attack_type != "none":
@@ -59,10 +62,12 @@ def main():
         start_time = time.time()
         local_weights = []
         local_grads = []
+        local_models = []
+        local_updates = []
         
         # for ESFL
-        global_model_state = copy.deepcopy(global_model.state_dict())
-        
+        # global_model_state = copy.deepcopy(global_model.state_dict())
+        initial_global_model_params = parameters_to_vector(global_model.parameters()).detach()
         # --- Client Training ---
         idxs_users = range(args.num_clients)
         
@@ -72,42 +77,70 @@ def main():
                                      device=args.device, is_malicious=is_mal)
             
 
-            grads = local_client.train(copy.deepcopy(global_model).to(args.device))
+            grads, model, update = local_client.train(copy.deepcopy(global_model).to(args.device))
             local_grads.append(grads)
+            local_models.append(model)
+            local_updates.append(update)
         
         # --- Server Training (Root Data) ---
-        server_grads = None
+        root_grads = None
         if args.agg_method in ["fltrust", "my_algo"]:
             root_client = LocalUpdate(args=args, dataset=root_data, idxs=list(range(len(root_data))), 
                                     device=args.device, is_malicious=False)
-            server_grads = root_client.train(copy.deepcopy(global_model).to(args.device))
+            root_grads, root_model, root_update = root_client.train(copy.deepcopy(global_model).to(args.device))
         
+        if args.attack_type == "alie":
+            # ----------------------------
+            # A little is enough Attack（ALIE）
+            # ----------------------------
+            perturb_collusion(local_grads, malicious_users, args)
+
+        if args.attack_type == "min-max":
+            perturb_collusion(local_grads, malicious_users, args)
+
         # --- Aggregation ---
         if args.agg_method == "fedavg":
             agg_grads = aggregate_fedavg(local_grads)
         elif args.agg_method == "krum":
             agg_grads = aggregate_krum(local_grads, args)
         elif args.agg_method == "fltrust":
-            agg_grads = aggregate_fltrust(local_grads, server_grads)
+            agg_grads = aggregate_fltrust(local_grads, root_grads)
         elif args.agg_method == "rfa":
             agg_grads = aggregate_priroagg_rfa(local_grads, args)
         elif args.agg_method == "esfl":
             # ESFL needs global_model_state to calculate the confidence
-            agg_grads = aggregate_esfl_ppra(local_grads, global_model_state, args)
+            #global_weights = aggregate_esfl(copy.deepcopy(local_models), copy.deepcopy(global_model), args)
+            agg_update = aggregate_esfl2(local_updates, copy.deepcopy(global_model).to(args.device), args)
         elif args.agg_method == "my_algo":
-            agg_grads = aggregate_my_algo(local_grads, server_grads, args)
+            agg_update = aggregate_my_algo2(local_updates, root_update, copy.deepcopy(global_model).to(args.device), args)
         else:
             raise ValueError("Unknown aggregation method")
             
         # --- Global Update ---
-        with torch.no_grad():
-            for param, grad in zip(global_model.parameters(), agg_grads):
-                param.data.add_(grad)
+        #if args.agg_method == "esfl":
+        #
+        if args.agg_method in ["esfl", "my_algo"]:
+            with torch.no_grad():
+                # for param, update_val in zip(global_model.parameters(), agg_update):
+                    # 直接相加。
+                    # update_val = W_final - W_init，所以 W_new = W_init + update_val
+                # param.data.add_(agg_update)
+                vector_to_parameters(agg_update + initial_global_model_params, global_model.parameters())
+        else:
+            with torch.no_grad():
+                for param, grad_val in zip(global_model.parameters(), agg_grads):
+                    # 1. 确保设备一致
+                    grad_val = grad_val.to(param.device)
+                    
+                    # 2. 执行减法 (Gradient Descent)
+                    # W_new = W_old - lr * gradient
+                    param.data.sub_(grad_val * args.lr)
                 
         end_time = time.time()
         round_time = end_time - start_time
         
         # --- Evaluation ---
+        global_model.float()
         test_acc = evaluate(global_model, test_dataset, args)
         print(f"Round {round_idx+1}/{args.rounds} | Accuracy: {test_acc:.2f}% | Time: {round_time:.2f}s")
         

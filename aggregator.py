@@ -1,10 +1,15 @@
+import copy
 import torch
 import torch.nn.functional as F
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from sklearn.cluster import DBSCAN
 import hdbscan
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import sklearn.metrics.pairwise as smp
+from scipy.spatial.distance import cityblock, cdist, cosine
+from collections import Counter
 
 def flatten(grads):
     return torch.cat([g.view(-1) for g in grads])
@@ -27,6 +32,7 @@ def aggregate_fedavg(client_grads, **kwargs):
             weighted_grads[i] += g / num_clients
     return weighted_grads
 
+# todo: use weight 
 def aggregate_krum(client_grads, args, **kwargs):
     """Krum"""
     f = int(args.num_clients * args.mal_prop)
@@ -116,57 +122,235 @@ def aggregate_priroagg_rfa(client_grads, args, **kwargs):
     aggregated = unflatten(v, client_grads[0])
     return aggregated
 
+def clusters_dissimilarity(clusters, centers):
+    n0 = len(clusters[0])
+    n1 = len(clusters[1])
+    m = n0 + n1 
+    cs0 = smp.cosine_similarity(clusters[0])
+    cs1 = smp.cosine_similarity(clusters[1])
+    mincs0 = np.min(cs0, axis=1)
+    mincs1 = np.min(cs1, axis=1)
+    ds0 = n0/m * (1 - np.mean(mincs0))
+    ds1 = n1/m * (1 - np.mean(mincs1))
+    return ds0, ds1
 
-def aggregate_esfl_ppra(client_grads, global_model_state, args, **kwargs):
+# Get average weights
+def average_weights(w, marks):
+    """
+    Returns the average of the weights.
+    """
+    w_avg = copy.deepcopy(w[0])
+    for key in w_avg.keys():
+        w_avg[key] = w_avg[key] * marks[0]
+    for key in w_avg.keys():
+        for i in range(1, len(w)):
+            w_avg[key] += w[i][key] * marks[i]
+        w_avg[key] = w_avg[key] *(1/sum(marks))
+    return w_avg
+
+def average_updates(local_updates, marks):
+    num_participating_clients = np.sum(marks)
+    total_update = local_updates[0] * marks[0]
+        
+    # 5A. 遍历剩余客户端，进行累加
+    for i in range(1, len(local_updates)):
+        total_update += local_updates[i] * marks[i]
+        
+    # 6A. 计算平均值
+    update_avg = total_update / num_participating_clients
+    return update_avg
+
+def aggregate_esfl(local_models, global_model, ptypes):
     """
     ESFL: Accelerating Poisonous Model Detection in  Privacy-Preserving Federated Learning
     PPRA: Privacy-Preserving Robust Aggregation
     """
+    local_weights = [copy.deepcopy(model).state_dict() for model in local_models]
+    m = len(local_models)
+    for i in range(m):
+        local_models[i] = list(local_models[i].parameters())
+    global_model = list(global_model.parameters())
+    dw = [None for i in range(m)]
+    db = [None for i in range(m)]
+    for i in range(m):
+        dw[i]= global_model[-2].cpu().data.numpy() - \
+            local_models[i][-2].cpu().data.numpy() 
 
-    flat_clients_tensor = torch.stack([flatten(g) for g in client_grads])
-    flat_clients_np = flat_clients_tensor.detach().numpy()
-    
-    num_clients = len(client_grads)
-    K = args.num_clusters #default to 2
-
-    kmeans = KMeans(n_clusters=K, random_state=args.seed, n_init='auto')
-    kmeans.fit(flat_clients_np)
-    labels = kmeans.labels_ 
-
-    global_model_flat_list = [v.flatten() for v in global_model_state.values()]
-    global_model_flat_tensor = torch.cat(global_model_flat_list)
-    global_model_flat_np = global_model_flat_tensor.detach().numpy().reshape(1, -1)
-    
-    best_cluster_label = -1
-    max_confidence = -float('inf')
-    
-    # select the best cluster
-    for label in range(K):
-        cluster_indices = np.where(labels == label)[0]
+        db[i]= global_model[-1].cpu().data.numpy() - \
+            local_models[i][-1].cpu().data.numpy()
         
-        if len(cluster_indices) == 0:
-            continue
+    dw = np.asarray(dw)
+    db = np.asarray(db)
+    print(dw.shape)
+
+    "If one class or two classes classification model"
+    if len(db[0]) <= 2:
+        data = []
+        for i in range(m):
+            data.append(dw[i].reshape(-1))
+    
+        kmeans = KMeans(n_clusters=2, random_state=0).fit(data)
+        labels = kmeans.labels_
+
+        clusters = {0:[], 1:[]}
+        for i, l in enumerate(labels):
+            clusters[l].append(data[i])
+
+        good_cl = 0
+        cs0, cs1 = clusters_dissimilarity(clusters, kmeans.cluster_centers_)
+        if cs0 < cs1:
+            good_cl = 1
+
+        scores = np.ones([m])
+        for i, l in enumerate(labels):
+            # print(ptypes[i], 'Cluster:', l)
+            if l != good_cl:
+                scores[i] = 0
             
-        cluster_grads_np = flat_clients_np[cluster_indices]
-        similarities = cosine_similarity(cluster_grads_np, global_model_flat_np).flatten()
-        confidence = np.mean(np.maximum(0, similarities))
+        global_weights = average_weights(local_weights, scores)
+        return global_weights
+
+    "For multiclassification models"
+    norms = np.linalg.norm(dw, axis = -1) 
+    memory = np.sum(norms, axis = 0)
+    memory +=np.sum(abs(db), axis = 0)
+    max_two_freq_classes = memory.argsort()[-2:]
+    data = []
+    for i in range(m):
+        data.append(dw[i][max_two_freq_classes].reshape(-1))
+
+    kmeans = KMeans(n_clusters=2, random_state=0).fit(data)
+    labels = kmeans.labels_
+
+    clusters = {0:[], 1:[]}
+    for i, l in enumerate(labels):
+        clusters[l].append(data[i])
+
+    good_cl = 0
+    cs0, cs1 = clusters_dissimilarity(clusters, kmeans.cluster_centers_)
+    if cs0 < cs1:
+        good_cl = 1
+
+    scores = np.ones([m])
+    for i, l in enumerate(labels):
+        if l != good_cl:
+            scores[i] = 0
         
-        if confidence > max_confidence:
-            max_confidence = confidence
-            best_cluster_label = label
+    global_weights = average_weights(local_weights, scores)
+    return global_weights
 
-    best_cluster_indices = np.where(labels == best_cluster_label)[0]
-    best_cluster_grads_np = flat_clients_np[best_cluster_indices]
-    weights = np.maximum(0, cosine_similarity(best_cluster_grads_np, global_model_flat_np).flatten())
-    total_weight = np.sum(weights)
-    normalized_weights = weights / total_weight
-    
-    weighted_flat_agg_np = np.sum(best_cluster_grads_np * normalized_weights[:, np.newaxis], axis=0)
-    weighted_flat_agg_tensor = torch.from_numpy(weighted_flat_agg_np).to(flat_clients_tensor.device).float()
-    
-    return unflatten(weighted_flat_agg_tensor, client_grads[0])
+def aggregate_esfl2(client_updates, global_model, args):
+    """
+    ESFL: Accelerating Poisonous Model Detection in  Privacy-Preserving Federated Learning
+    PPRA: Privacy-Preserving Robust Aggregation
+    """
+    #local_weights = [copy.deepcopy(model).state_dict() for model in local_models]
+    m = len(client_updates)
+    initial_global_model_params = parameters_to_vector(global_model.parameters()).detach()
+    client_models_list = []
+    global_model_list = list(global_model.parameters())
 
-def aggregate_my_algo(client_grads, server_grad, args, **kwargs):
+
+    for client_update in client_updates:
+        vector_to_parameters(client_update + initial_global_model_params, global_model.parameters())
+        client_models_list.append(list(global_model.parameters()))
+
+
+    dw = [None for i in range(m)]
+    db = [None for i in range(m)]
+    for i in range(m):
+        dw[i]= global_model_list[-2].cpu().data.numpy() - \
+            client_models_list[i][-2].cpu().data.numpy() 
+        print(dw[i])
+
+        db[i]= global_model_list[-1].cpu().data.numpy() - \
+            client_models_list[i][-1].cpu().data.numpy()
+        
+    dw = np.asarray(dw)
+    db = np.asarray(db)
+    print(dw.shape)
+
+    "If one class or two classes classification model"
+    if len(db[0]) <= 2:
+        data = []
+        for i in range(m):
+            data.append(dw[i].reshape(-1))
+    
+        kmeans = KMeans(n_clusters=2, random_state=0).fit(data)
+        labels = kmeans.labels_
+
+        clusters = {0:[], 1:[]}
+        for i, l in enumerate(labels):
+            clusters[l].append(data[i])
+
+        if len(clusters[0]) == 1:
+            good_cl = 1
+        elif len(clusters[1]) == 1:
+            good_cl = 0
+        else:
+            print(f"簇 0 的样本数量：{len(clusters[0])}")
+            print(f"簇 1 的样本数量：{len(clusters[1])}")
+            good_cl = 0
+            cs0, cs1 = clusters_dissimilarity(clusters, kmeans.cluster_centers_)
+            if cs0 < cs1:
+                good_cl = 1
+
+        scores = np.ones([m])
+        for i, l in enumerate(labels):
+            # print(ptypes[i], 'Cluster:', l)
+            if l != good_cl:
+                scores[i] = 0
+            
+        aggr_update = average_updates(client_updates, scores)
+
+        return aggr_update
+
+    "For multiclassification models"
+    # 示例检查：
+    if np.any(np.isinf(dw)) or np.any(np.isnan(dw)):
+        # 标记这个客户端的 score 为 0，将其排除。
+        # 或者直接停止训练并报告错误。
+        print("find Nan")
+        
+    norms = np.linalg.norm(dw, axis = -1) 
+    memory = np.sum(norms, axis = 0)
+    memory +=np.sum(abs(db), axis = 0)
+    max_two_freq_classes = memory.argsort()[-2:]
+    data = []
+    for i in range(m):
+        data.append(dw[i][max_two_freq_classes].reshape(-1))
+
+    kmeans = KMeans(n_clusters=2, random_state=0).fit(data)
+    labels = kmeans.labels_
+
+    clusters = {0:[], 1:[]}
+    for i, l in enumerate(labels):
+        clusters[l].append(data[i])
+
+    if len(clusters[0]) == 1:
+        good_cl = 1
+    elif len(clusters[1]) <= 1:
+        good_cl = 0
+    else:
+        print(f"簇 0 的样本数量：{len(clusters[0])}")
+        print(f"簇 1 的样本数量：{len(clusters[1])}")
+        good_cl = 0
+        cs0, cs1 = clusters_dissimilarity(clusters, kmeans.cluster_centers_)
+        if cs0 < cs1:
+            good_cl = 1
+
+    scores = np.ones([m])
+    for i, l in enumerate(labels):
+        if l != good_cl:
+            scores[i] = 0
+        
+    aggr_update = average_updates(client_updates, scores)
+    
+    return aggr_update
+
+
+
+def aggregate_my_algo(client_updates, server_update, args, **kwargs):
     """
     DBSCAN-based Trust Aggregation (DTA)
     注意：在模拟中，我们直接使用明文梯度计算距离和求和。
@@ -174,8 +358,8 @@ def aggregate_my_algo(client_grads, server_grad, args, **kwargs):
     'aggregation'步骤使用的是同态去掩码后的总和 (Unmasked Sum)。
     数学上，Given key diff, Masked Dist == Real Dist。
     """
-    flat_server = flatten(server_grad)
-    flat_clients = torch.stack([flatten(g) for g in client_grads])
+    flat_server = flatten(server_update)
+    flat_clients = torch.stack([flatten(g) for g in client_updates])
     
     # 1. Dynamic Eps (base on dist median)
     with torch.no_grad():
@@ -197,7 +381,7 @@ def aggregate_my_algo(client_grads, server_grad, args, **kwargs):
     unique_labels = set(labels) - {-1}
 
     if not unique_labels:
-        return server_grad
+        return server_update
     
     cluster_means = []
     confidences = []
@@ -245,4 +429,164 @@ def aggregate_my_algo(client_grads, server_grad, args, **kwargs):
         # so we just return server model here.
         final_flat = flat_server
         
-    return unflatten(final_flat, server_grad)
+    return unflatten(final_flat, server_update)
+
+# --- 辅助函数：根据 PyTorch 结构获取最后一层的索引和大小 ---
+def get_last_layer_info(global_model):
+    """返回最后一层参数在展平向量中的起始索引和长度"""
+    
+    # 获取参数列表
+    all_params = list(global_model.parameters())
+    if not all_params:
+        raise ValueError("Model has no parameters.")
+
+    # 找到最后一个参数 (通常是最后一层的偏置或权重)
+    last_param = all_params[-1]
+    
+    # 找到倒数第二个参数 (通常是最后一层的权重)
+    second_to_last_param = all_params[-2] 
+
+    # 确定要聚合的“最后一层权重”
+    # 在 PyTorch 中，参数通常是 [W_L-1, b_L-1, W_L, b_L]
+    # 我们通常取倒数第二个参数，即 W_L (最后一层的权重)
+    target_param = second_to_last_param 
+    target_param_flat_size = target_param.numel() # 元素总数
+    
+    # 计算它在整个展平向量中的起始索引
+    start_index = 0
+    # 累加到倒数第二个参数之前的所有参数大小
+    for param in all_params[:-2]:
+        start_index += param.numel()
+        
+    return start_index, target_param_flat_size
+
+def get_largest_cluster_label(clustering):
+    """
+    从 DBSCAN 聚类结果中获取拥有最多样本的簇的编号。
+    忽略标签为 -1 的噪声点。
+    """
+    if not hasattr(clustering, 'labels_'):
+        return None, 0
+
+    labels = clustering.labels_
+    
+    # 统计所有标签的频率
+    counts = Counter(labels)
+    
+    # 排除 DBSCAN 的噪声点 (-1)
+    if -1 in counts:
+        del counts[-1]
+        
+    if not counts:
+        # 如果只有噪声点或没有点
+        return None, 0
+    
+    # 找到计数最大的簇
+    # most_common(1) 返回 [ (标签, 数量) ]
+    largest_cluster_item = counts.most_common(1)[0]
+    
+    largest_cluster_label = largest_cluster_item[0]
+    max_count = largest_cluster_item[1]
+    
+    return largest_cluster_label, max_count
+
+def aggregate_my_algo2(client_updates, server_update, global_model, args, **kwargs):
+    """
+    DBSCAN-based Trust Aggregation (DTA)
+    注意：在模拟中，我们直接使用明文梯度计算距离和求和。
+    在实际部署中，'clustering'步骤使用的是掩码梯度的距离 (Masked Dist)，
+    'aggregation'步骤使用的是同态去掩码后的总和 (Unmasked Sum)。
+    数学上，Given key diff, Masked Dist == Real Dist。
+    """
+
+    start_idx, flat_size = get_last_layer_info(global_model)
+    client_updates_numpy_list = [update.cpu().numpy() for update in client_updates]
+    server_update_numpy = server_update.cpu().numpy()
+
+    # 提取所有客户端更新中的目标部分
+    target_updates = np.array([
+        update[start_idx : start_idx + flat_size] 
+        for update in client_updates_numpy_list
+    ])
+
+    server_target_update = server_update_numpy[start_idx : start_idx + flat_size]
+
+    # 1. Dynamic Eps (base on dist median)
+    dists = cdist(target_updates, target_updates, metric='cityblock')
+    median_dist = np.median(dists)
+    # maybe we can adjust the epsilon with Non-IID args.alpha
+    if args.iid : dynamic_eps = median_dist * 1.5
+    elif args.name_dataset == "mnist" : dynamic_eps = median_dist * args.alpha
+    elif args.name_dataset == "cifar" : dynamic_eps = median_dist * args.alpha
+    if dynamic_eps < 1e-3: dynamic_eps = 1.0
+            
+    # 2. HDBSCAN cluster
+    #    We can get the manhattan distance of masked grads with the key differences
+    #    dist_ij = ||masked_grad_i - masked_grad_j - F(key_i - key_j, b)||
+    #X = flat_clients.detach().numpy()
+    #clustering = hdbscan.HDBSCAN(min_cluster_size=2, metric='manhattan').fit(X)
+    clustering = DBSCAN(eps=dynamic_eps, min_samples=2, metric='manhattan').fit(target_updates)
+    labels = clustering.labels_
+    unique_labels = set(labels) - {-1}
+
+    if not unique_labels:
+        return server_update
+    
+    cluster_means = []
+    confidences = []
+    
+    # 3. trust evaluation
+    for label in unique_labels:
+        indices = [i for i, x in enumerate(labels) if x == label]
+        cluster_vectors = []
+        cluster_target_vectors = []
+        # use the mean gradients to represent the cluster
+        # we can get the sum of masked grads with the keys' sum as:
+        # mean of cluster grads = 1/n * (sum_of_masked_grads - F(sum_of_keys, b))
+        for i in indices:
+            cluster_target_vectors.append(target_updates[i])
+            cluster_vectors.append(client_updates_numpy_list[i])  # 前半部分
+        mean_vec = np.mean(cluster_vectors, axis=0)
+        mean_target_vec = np.mean(cluster_target_vectors, axis=0)
+
+        # cosine similarity with root gradient
+        sim = 1 - cosine(mean_target_vec, server_target_update)
+
+        # ReLU
+        if sim <= 0:
+            conf = 0
+        else:
+            conf = sim * len(indices)/args.num_clients  # weight by cluster size
+
+        cluster_means.append(mean_vec)
+        confidences.append(conf)
+
+        print(f"label: {label} confidence: {conf}")
+        print(f"client indices: {indices}")
+    
+    # 4. weighted aggregation
+    total_conf = sum(confidences)
+
+    final_update = np.zeros_like(server_update_numpy)
+
+    if total_conf > 0.1:
+        # normaliztion the cluster confidence
+        normalized_confs = confidences / total_conf
+        for i, mean_vec in enumerate(cluster_means):
+            final_update += normalized_confs[i] * mean_vec
+    else:
+        # two possible reasons for this case (total_conf <= 0.01):
+        # 1. there are no benigh clusters,
+        # 2. the model has been already converaged, so that the gradients is too small to
+        #    calculate the cosine similarity,
+        # so we just return server model here.
+        # final_update = server_update_numpy
+        max_cluster_label, count = get_largest_cluster_label(clustering)
+        if max_cluster_label is not None :
+            final_update = cluster_means[max_cluster_label]
+        else:
+            final_update = server_update_numpy
+
+    aggr_update_tensor = torch.tensor(final_update).to(torch.float64)
+
+    return aggr_update_tensor
