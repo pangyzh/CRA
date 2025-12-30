@@ -12,8 +12,8 @@ from datetime import datetime
 from args import args_parser
 from dataloader import get_dataset, CNN_MNIST, CNN_CIFAR
 from clients import LocalUpdate
-from attacker import configure_malicious_clients, perturb_collusion,poison_minmax
-from aggregator import aggregate_fedavg, aggregate_krum, aggregate_fltrust, aggregate_my_algo, aggregate_my_algo2,aggregate_esfl,aggregate_esfl2, aggregate_priroagg_rfa
+from attacker import configure_malicious_clients, perturb_collusion
+from aggregator import aggregate_fedavg, aggregate_krum, aggregate_fltrust2, aggregate_my_algo, aggregate_my_algo2,aggregate_esfl,aggregate_esfl2, aggregate_priroagg_rfa
 
 def evaluate(net, dataset, args):
     net.eval()
@@ -67,7 +67,7 @@ def main():
         
         # for ESFL
         # global_model_state = copy.deepcopy(global_model.state_dict())
-        initial_global_model_params = parameters_to_vector(global_model.parameters()).detach()
+        initial_global_model_params = parameters_to_vector(global_model.parameters())
         # --- Client Training ---
         idxs_users = range(args.num_clients)
         
@@ -84,27 +84,21 @@ def main():
         
         # --- Server Training (Root Data) ---
         root_grads = None
-        if args.agg_method in ["fltrust", "my_algo"]:
-            root_client = LocalUpdate(args=args, dataset=root_data, idxs=list(range(len(root_data))), 
-                                    device=args.device, is_malicious=False)
-            root_grads, root_model, root_update = root_client.train(copy.deepcopy(global_model).to(args.device))
-        
-        if args.attack_type == "alie":
-            # ----------------------------
-            # A little is enough Attack（ALIE）
-            # ----------------------------
-            perturb_collusion(local_grads, malicious_users, args)
-
-        if args.attack_type == "min-max":
-            perturb_collusion(local_grads, malicious_users, args)
+        # if args.agg_method in ["fltrust", "my_algo", "fedavg"]:
+        root_client = LocalUpdate(args=args, dataset=root_data, idxs=list(range(len(root_data))), 
+                                device=args.device, is_malicious=False)
+        root_grads, root_model, root_update = root_client.train(copy.deepcopy(global_model).to(args.device))
+    
+        if args.attack_type in ["alie", "min-max", "sine"]:
+            perturb_collusion(local_grads, local_updates, malicious_users, root_grads, args)
 
         # --- Aggregation ---
         if args.agg_method == "fedavg":
-            agg_grads = aggregate_fedavg(local_grads)
+            agg_update = aggregate_fedavg(local_updates)
         elif args.agg_method == "krum":
-            agg_grads = aggregate_krum(local_grads, args)
+            agg_update = aggregate_krum(local_updates, args)
         elif args.agg_method == "fltrust":
-            agg_grads = aggregate_fltrust(local_grads, root_grads)
+            agg_update = aggregate_fltrust2(local_updates, root_update)
         elif args.agg_method == "rfa":
             agg_grads = aggregate_priroagg_rfa(local_grads, args)
         elif args.agg_method == "esfl":
@@ -112,35 +106,31 @@ def main():
             #global_weights = aggregate_esfl(copy.deepcopy(local_models), copy.deepcopy(global_model), args)
             agg_update = aggregate_esfl2(local_updates, copy.deepcopy(global_model).to(args.device), args)
         elif args.agg_method == "my_algo":
-            agg_update = aggregate_my_algo2(local_updates, root_update, copy.deepcopy(global_model).to(args.device), args)
+            agg_update = aggregate_my_algo2(local_updates, root_update, args)
         else:
             raise ValueError("Unknown aggregation method")
             
         # --- Global Update ---
         #if args.agg_method == "esfl":
         #
-        if args.agg_method in ["esfl", "my_algo"]:
+        if args.agg_method in ["esfl", "fedavg", "my_algo", "fltrust", "krum"]:
             with torch.no_grad():
                 # for param, update_val in zip(global_model.parameters(), agg_update):
                     # 直接相加。
                     # update_val = W_final - W_init，所以 W_new = W_init + update_val
                 # param.data.add_(agg_update)
-                vector_to_parameters(agg_update + initial_global_model_params, global_model.parameters())
+                vector_to_parameters(agg_update.to(args.device) + initial_global_model_params, global_model.parameters())
         else:
             with torch.no_grad():
-                for param, grad_val in zip(global_model.parameters(), agg_grads):
-                    # 1. 确保设备一致
-                    grad_val = grad_val.to(param.device)
-                    
-                    # 2. 执行减法 (Gradient Descent)
-                    # W_new = W_old - lr * gradient
-                    param.data.sub_(grad_val * args.lr)
+                for param, grad in zip(global_model.parameters(), agg_grads):
+                    param.data.add_(grad)
                 
         end_time = time.time()
         round_time = end_time - start_time
         
         # --- Evaluation ---
         global_model.float()
+        # global_model.to(args.device)
         test_acc = evaluate(global_model, test_dataset, args)
         print(f"Round {round_idx+1}/{args.rounds} | Accuracy: {test_acc:.2f}% | Time: {round_time:.2f}s")
         

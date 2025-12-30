@@ -100,6 +100,11 @@ class LocalUpdate:
         with torch.no_grad():
             update = parameters_to_vector(global_model.parameters()) - initial_global_model_params
             grads = -update / self.args.lr
+
+            if self.is_malicious:
+                if self.args.attack_type in ["gaussian_noise", "sign_flip", "free_rider"]:
+                    grads, update = perturb_gradients(grads, update, self.args)
+
             return grads, global_model, update
             
                 # doing projected gradient descent to ensure the update is within the norm bounds 
