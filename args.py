@@ -4,7 +4,7 @@ def args_parser():
     parser = argparse.ArgumentParser()
 
     # basic setting
-    parser.add_argument("--name-dataset", type=str, default="mnist",
+    parser.add_argument("--dataset", type=str, default="mnist",
                         help="dataset for training, 'mnist' or 'cifar' (default: 'mnist')")
     parser.add_argument("--num_clients", type=int, default=100, help="number of clients: K")
     parser.add_argument("--rounds", type=int, default=200, help="rounds of training")
@@ -18,11 +18,11 @@ def args_parser():
     parser.add_argument("--mal_prop", type=float, default=0, 
                         help="proportion of malicious clients (default: 0)")
     parser.add_argument("--attack_type", type=str, default="label_flip",
-                        choices=["none", "label_flip", "gaussian_noise", "sign_flip", "alie", "free_rider", "min-max", "sine"],
+                        choices=["none", "label_flip", "gaussian_noise", "alie", "min-max", "sine"],
                         help="type of byzantine attack")
     parser.add_argument("--alie_zmax", type=float, default=2, 
                         help="para for ALIE attack: scaling")
-    parser.add_argument("--min_max_scale", type=float, default=2, 
+    parser.add_argument("--min_max_scale", type=float, default=1, 
                         help="para for MIN_MAX attack: scaling")
     parser.add_argument("--fr_noise", type=float, default=1, 
                         help="para for Free rider attack")
@@ -35,6 +35,7 @@ def args_parser():
     parser.add_argument("--agg_method", type=str, default="my_algo",
                         choices=["fedavg", "krum", "fltrust","rfa", "esfl", "my_algo"],
                         help="aggregation algorithm")
+    parser.add_argument("--lamda", type=float, default=1, help="scaling para for clustering epsilon")
     
     # Non-IID setting
     parser.add_argument("--iid", action='store_true', help="select to force iid data")

@@ -10,7 +10,8 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 import os
 from datetime import datetime
 from args import args_parser
-from dataloader import get_dataset, CNN_MNIST, CNN_CIFAR
+from dataloader import get_dataset
+from models import CNN_MNIST, CNN_CIFAR, ResNet20_CIFAR
 from clients import LocalUpdate
 from attacker import configure_malicious_clients, perturb_collusion
 from aggregator import aggregate_fedavg, aggregate_krum, aggregate_fltrust2, aggregate_my_algo, aggregate_my_algo2,aggregate_esfl,aggregate_esfl2, aggregate_priroagg_rfa
@@ -32,14 +33,14 @@ def evaluate(net, dataset, args):
 def main():
     args = args_parser()
     args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Running on {args.device}, Dataset: {args.name_dataset}, Algo: {args.agg_method}, Attack: {args.attack_type}")
+    print(f"Running on {args.device}, Dataset: {args.dataset}, Algo: {args.agg_method}, Attack: {args.attack_type}")
 
     train_dataset, test_dataset, user_groups, root_data, num_channels = get_dataset(args)
 
     num_classes = 10
-    if args.name_dataset == 'mnist':
+    if args.dataset == 'mnist':
         global_model = CNN_MNIST().to(args.device)
-    elif args.name_dataset == 'cifar':
+    elif args.dataset == 'cifar':
         global_model = CNN_CIFAR().to(args.device)
     # global_model.train()
 
@@ -76,8 +77,8 @@ def main():
             local_client = LocalUpdate(args=args, dataset=train_dataset, idxs=user_groups[idx], 
                                      device=args.device, is_malicious=is_mal)
             
-
-            grads, model, update = local_client.train(copy.deepcopy(global_model).to(args.device))
+            local_model = copy.deepcopy(global_model)
+            grads, model, update = local_client.train(local_model)
             local_grads.append(grads)
             local_models.append(model)
             local_updates.append(update)
@@ -87,7 +88,8 @@ def main():
         # if args.agg_method in ["fltrust", "my_algo", "fedavg"]:
         root_client = LocalUpdate(args=args, dataset=root_data, idxs=list(range(len(root_data))), 
                                 device=args.device, is_malicious=False)
-        root_grads, root_model, root_update = root_client.train(copy.deepcopy(global_model).to(args.device))
+        root_model = copy.deepcopy(global_model)
+        root_grads, root_model, root_update = root_client.train(root_model)
     
         if args.attack_type in ["alie", "min-max", "sine"]:
             perturb_collusion(local_grads, local_updates, malicious_users, root_grads, args)
@@ -142,7 +144,7 @@ def main():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     dist_str = "iid" if args.iid else f"noniid_alpha{args.alpha}"
-    file_name = f"{args.name_dataset}_{args.agg_method}_{args.attack_type}_mal{args.mal_prop}_{dist_str}_{timestamp}.csv"
+    file_name = f"{args.dataset}_{args.agg_method}_{args.attack_type}_mal{args.mal_prop}_{dist_str}_{timestamp}.csv"
     
     save_path = os.path.join(args.out_path, file_name)
     df = pd.DataFrame(metrics)

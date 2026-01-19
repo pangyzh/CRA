@@ -5,24 +5,6 @@ from torch.utils.data import DataLoader, Subset
 import torch.nn as nn
 import torch.nn.functional as F
 
-class CNN_MNIST(nn.Module):
-    def __init__(self, num_channels=1):
-        super(CNN_MNIST, self).__init__()
-        self.conv1 = nn.Conv2d(num_channels, 10, kernel_size=5)
-        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-        self.fc1 = nn.Linear(320, 50) # MNIST 320, CIFAR 500 (approx for simple net)
-        self.fc2 = nn.Linear(50, 10)
-        self.is_cifar = (num_channels == 3)
-        if self.is_cifar:
-            self.fc1 = nn.Linear(20 * 5 * 5, 50) # 32x32 -> 28x28 -> 14x14 -> 10x10 -> 5x5
-
-    def forward(self, x):
-        x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2(x), 2))
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return F.log_softmax(x, dim=1)
 
 # class CNN_CIFAR(nn.Module):
 #     def __init__(self):
@@ -76,7 +58,7 @@ class CNN_CIFAR(nn.Module):
 def get_dataset(args):
     """读取数据集并进行划分"""
     data_dir = './data/'
-    if args.name_dataset == 'mnist':
+    if args.dataset == 'mnist':
         transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
@@ -84,10 +66,10 @@ def get_dataset(args):
         train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
         test_dataset = datasets.MNIST(data_dir, train=False, download=True, transform=transform)
         input_channels = 1
-    elif args.name_dataset == 'cifar':
+    elif args.dataset == 'cifar':
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
         ])
         train_dataset = datasets.CIFAR10(data_dir, train=True, download=True, transform=transform)
         test_dataset = datasets.CIFAR10(data_dir, train=False, download=True, transform=transform)

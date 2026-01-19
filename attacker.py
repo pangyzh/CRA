@@ -2,23 +2,14 @@ import torch
 import numpy as np
 import copy
 import scipy
-from utils import flatten, unflatten
+from utils import flatten, unflatten, get_mean_and_std
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
 def configure_malicious_clients(args):
     """随机选择攻击者索引"""
     num_mal = int(args.num_clients * args.mal_prop)
     mal_indices = np.random.choice(range(args.num_clients), num_mal, replace=False)
     return set(mal_indices)
-
-def get_mean_and_std(gradient_list):
-
-    gradient_mean, gradient_std = [], []
-    for idx in range(len(gradient_list[0])):
-        layer_gradient_stack = torch.stack([gradient_list[i][idx] for i in range(len(gradient_list))], dim=0)
-        gradient_mean.append(torch.mean(layer_gradient_stack, dim=0))
-        gradient_std.append(torch.std(layer_gradient_stack, dim=0))
-    
-    return gradient_mean, gradient_std
 
 def solve_cosine_coordinate(m, cl, target_cs_val, k):
     # 1. 强制约束目标值在合理区间 
@@ -69,31 +60,14 @@ def perturb_gradients(grads, update, args):
         update += noise
         new_grads = -update / args.lr
         return new_grads, update
-        
-    # ----------------------------
-    # Sign-Flip
-    # ----------------------------
-    elif args.attack_type == "sign_flip":
-        # 梯度符号反转
-        new_grads = -grads
-        update = -new_grads * args.lr
-        return new_grads, update
-
-    # ----------------------------
-    # Free-rider
-    # ----------------------------
-    # elif args.attack_type == "free_rider":
-    #     new_grads = []
-    #     noise_scale = getattr(args, "fr_noise", 1e-5)  # 几乎不训练
-    #     for g in grads:
-    #         fake_grad = torch.randn_like(g) * noise_scale
-    #         new_grads.append(fake_grad)
-    #     return new_grads
-
 
 
 def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args):
 
+    # grads_flatten = [flatten(g) for g in grads_list]
+    # all_grads_flatten = torch.stack(grads_flatten)
+    # gradient_mean = torch.mean(all_grads_flatten, dim=0)
+    # gradient_std = torch.std(all_grads_flatten, dim=0)
     gradient_mean, gradient_std = get_mean_and_std(grads_list)
 
     if args.attack_type == "alie":
@@ -101,8 +75,8 @@ def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args
         # A little is enough Attack（ALIE）
         # ----------------------------
         # parameters for ALIE attack
-        new_grads = []
-        users_grad = []
+        # new_grads = []
+        # users_grad = []
         # n = args.num_clients
         # m = int(args.num_clients * args.mal_prop)
         # if m > n/2:
@@ -121,7 +95,18 @@ def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args
             for user_idx in malicious_users:
                 grads_list[user_idx][idx].copy_(bad_gradient)
                 update_list[user_idx][idx].copy_(bad_update)
-    
+        # bad_gradient_flat = gradient_mean - gradient_std * args.alie_zmax
+        # bad_update_flat = -args.lr * bad_gradient_flat
+        # bad_gradient_layers = unflatten(bad_gradient_flat, grads_list[0])
+        # bad_update_layers = unflatten(bad_update_flat, update_list[0])
+
+        # # 批量更新恶意用户的梯度和更新量
+        # for user_idx in malicious_users:
+        #     for layer_idx in range(len(grads_list[user_idx])):
+        #         # 使用原地操作 copy_ 确保内存更新
+        #         grads_list[user_idx][layer_idx].copy_(bad_gradient_layers[layer_idx])
+        #         update_list[user_idx][layer_idx].copy_(bad_update_layers[layer_idx])
+
     elif args.attack_type == "min-max":
         flat_clients = torch.stack([flatten(g) for g in grads_list])
 
@@ -129,6 +114,7 @@ def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args
         max_dist = torch.max(dists)
 
         benign_vector = flatten(gradient_mean)
+        #benign_vector = gradient_mean
 
         # perturbation vector: Inverse unit vector
         deviation = - benign_vector/torch.norm(benign_vector)
@@ -157,12 +143,25 @@ def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args
                 lamda = lamda + lamda_fail / 2
             else:
                 lamda = lamda - lamda_fail / 2
+                print('continue')
 
             lamda_fail = lamda_fail / 2
 
-        unflatten(deviation, flat_clients[0])
+        unflatten(deviation, grads_list[0])
 
         #noise = torch.normal(mean=0.0, std=1, size=m.shape)
+
+        # bad_gradient_flat = gradient_mean + args.min_max_scale * lamda_succ * deviation
+        # bad_update_flat = -args.lr * bad_gradient_flat
+        # bad_gradient_layers = unflatten(bad_gradient_flat, grads_list[0])
+        # bad_update_layers = unflatten(bad_update_flat, update_list[0])
+
+        # 批量更新恶意用户的梯度和更新量
+        # for user_idx in malicious_users:
+        #     for layer_idx in range(len(grads_list[user_idx])):
+        #         # 使用原地操作 copy_ 确保内存更新
+        #         grads_list[user_idx][layer_idx].copy_(bad_gradient_layers[layer_idx])
+        #         update_list[user_idx][layer_idx].copy_(bad_update_layers[layer_idx])
         for idx in range(len(grads_list[0])):
             bad_gradient = gradient_mean[idx] + args.min_max_scale * lamda_succ * deviation[idx]
             bad_update = -args.lr * bad_gradient

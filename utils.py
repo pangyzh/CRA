@@ -15,7 +15,15 @@ def unflatten(flat_grad, ref_grads):
         offset += numel
     return recovered
 
+def get_mean_and_std(gradient_list):
 
+    gradient_mean, gradient_std = [], []
+    for idx in range(len(gradient_list[0])):
+        layer_gradient_stack = torch.stack([gradient_list[i][idx] for i in range(len(gradient_list))], dim=0)
+        gradient_mean.append(torch.mean(layer_gradient_stack, dim=0))
+        gradient_std.append(torch.std(layer_gradient_stack, dim=0))
+    
+    return gradient_mean, gradient_std
 
 def get_loss_n_accuracy(model, criterion, data_loader, args, num_classes=10):
     """ Returns the loss and total accuracy, per class accuracy on the supplied data loader """

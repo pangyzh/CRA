@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from sklearn.cluster import DBSCAN
 import hdbscan
+import seaborn as sns
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
@@ -317,7 +319,7 @@ def aggregate_esfl2(client_updates, global_model, args):
     PPRA: Privacy-Preserving Robust Aggregation
     """ 
     m = len(client_updates)
-    client_updates_numpy_list = [update.cpu().numpy() for update in client_updates]
+    client_updates_numpy_list = [update.to(args.device).numpy() for update in client_updates]
     kmeans = KMeans(n_clusters=2, random_state=0).fit(client_updates_numpy_list)
     labels = kmeans.labels_
 
@@ -362,8 +364,8 @@ def aggregate_my_algo(client_updates, server_update, args, **kwargs):
         median_dist = torch.median(dists)
         # maybe we can adjust the epsilon with Non-IID args.alpha
         if args.iid : dynamic_eps = median_dist.item() * 1.5
-        elif args.name_dataset == "mnist" : dynamic_eps = median_dist.item() * args.alpha
-        elif args.name_dataset == "cifar" : dynamic_eps = median_dist.item() * args.alpha
+        elif args.dataset == "mnist" : dynamic_eps = median_dist.item() * args.alpha
+        elif args.dataset == "cifar" : dynamic_eps = median_dist.item()
         if dynamic_eps < 1e-3: dynamic_eps = 1.0
             
     # 2. HDBSCAN cluster
@@ -496,7 +498,7 @@ def aggregate_my_algo2(client_updates, server_update, args, **kwargs):
     a = 1
     b = 1/20
     #c = 1/2
-    c = 1/10
+    c = 1/2
 
     # start_idx, flat_size = get_last_layer_info(global_model)
     client_updates_numpy_list = [update.cpu().numpy() for update in client_updates]
@@ -507,13 +509,12 @@ def aggregate_my_algo2(client_updates, server_update, args, **kwargs):
     # 1. Dynamic Eps (base on dist median)
     dists = cdist(client_updates_numpy_list, client_updates_numpy_list, metric='cityblock')
     median_dist = np.median(dists)
-    # maybe we can adjust the epsilon with Non-IID args.alpha
-    if args.iid : dynamic_eps = median_dist
-    elif args.name_dataset == "mnist" : dynamic_eps = median_dist * args.alpha
-    elif args.name_dataset == "cifar" : dynamic_eps = median_dist * args.alpha
-    if dynamic_eps < 1e-3: dynamic_eps = 1.0
+    # maybe we can adjust the epsilon with Non-IID args.lamda
+    if args.dataset == "mnist" : dynamic_eps = median_dist * args.lamda
+    elif args.dataset == "cifar" : dynamic_eps = median_dist * args.lamda
+    if np.isnan(dynamic_eps) : dynamic_eps = 1.0
 
-    print(f"eps:{dynamic_eps}")
+    print(f"eps:{dynamic_eps}, median dist:{median_dist}")
             
     # 2. HDBSCAN cluster
     #    We can get the manhattan distance of masked grads with the key differences
@@ -529,36 +530,20 @@ def aggregate_my_algo2(client_updates, server_update, args, **kwargs):
     print(f'DSCAN计的聚类数量: {n_clusters_}')
     print(f'DSCAN估计的噪声点数量: {n_noise_}')
 
-    # 替换你的 DBSCAN 逻辑
-    clusterer_hdscan = hdbscan.HDBSCAN(min_cluster_size=2, min_samples=1, metric='manhattan', cluster_selection_method='eom')
-    labels_hdbscan = clusterer_hdscan.fit_predict(client_updates_numpy_list)
-
-    n_clusters_hdscan = len(set(labels_hdbscan))
-    n_noise_hdscan = list(labels_hdbscan).count(-1)
-
-    print(f'HDSCAN估计的聚类数量: {n_clusters_hdscan}')
-    print(f'HDSCAN估计的噪声点数量: {n_noise_hdscan}')
-
-    unique_labels_hdbscan = set(labels_hdbscan) - {-1}
-    # for label in unique_labels_hdbscan:
-    #     indices = [i for i, x in enumerate(labels_hdbscan) if x == label]
-    #     print(f"label: {label} count: {len(indices)}")
-    #     print(f"client indices: {indices}")
-
     unique_labels = set(labels) - {-1}
 
     # if not unique_labels:
     #     return server_update
 
-    if not unique_labels_hdbscan:
+    if not unique_labels:
         return server_update
 
     cluster_means = []
     raw_scores = []
     
     # 3. trust evaluation
-    for label in unique_labels_hdbscan:
-        indices = [i for i, x in enumerate(labels_hdbscan) if x == label]
+    for label in unique_labels:
+        indices = [i for i, x in enumerate(labels) if x == label]
         cluster_vectors = []
         # use the mean gradients to represent the cluster
         # we can get the sum of masked grads with the keys' sum as:
@@ -594,10 +579,10 @@ def aggregate_my_algo2(client_updates, server_update, args, **kwargs):
         print(f"client indices: {indices}")
     
     # 4. weighted aggregation
-    raw_scores = np.array(raw_scores)
+    raw_scores = np.array(raw_scores) # 放大分数以增强区分度
     # 这里的 T 是温度参数。T 越小，权重越向高分簇集中；T 越大，权重越平均。
     # 默认 T=1.0。如果你想让模型更果断地剔除差簇，可以把 raw_scores 乘以一个放大系数。
-    T = 0.5
+    T = 0.05
     exp_scores = np.exp(raw_scores / T)
     softmax_confs = exp_scores / np.sum(exp_scores)
 
