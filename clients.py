@@ -82,8 +82,8 @@ class LocalUpdate:
         for _ in range(self.args.local_epochs):
             for _, (inputs, labels) in enumerate(self.train_loader):
                 optimizer.zero_grad()
-                inputs, labels = inputs.to(device=self.args.device, non_blocking=True),\
-                                 labels.to(device=self.args.device, non_blocking=True)
+                inputs, labels = inputs.to(device=self.args.device, non_blocking=False),\
+                                 labels.to(device=self.args.device, non_blocking=False)
 
                 if self.is_malicious and self.args.attack_type == "label_flip":
                     inputs, labels = perturb_data(inputs, labels, self.args)

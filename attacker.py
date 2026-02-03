@@ -64,10 +64,6 @@ def perturb_gradients(grads, update, args):
 
 def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args):
 
-    # grads_flatten = [flatten(g) for g in grads_list]
-    # all_grads_flatten = torch.stack(grads_flatten)
-    # gradient_mean = torch.mean(all_grads_flatten, dim=0)
-    # gradient_std = torch.std(all_grads_flatten, dim=0)
     gradient_mean, gradient_std = get_mean_and_std(grads_list)
 
     if args.attack_type == "alie":
@@ -88,36 +84,20 @@ def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args
         #     z_max = args.alie_zmax
         # print(f"zmax:{z_max}")
 
-        for idx in range(len(grads_list[0])):
-            bad_gradient = gradient_mean[idx] - gradient_std[idx] * args.alie_zmax
-            bad_update = -args.lr * bad_gradient
-
-            for user_idx in malicious_users:
-                grads_list[user_idx][idx].copy_(bad_gradient)
-                update_list[user_idx][idx].copy_(bad_update)
-        # bad_gradient_flat = gradient_mean - gradient_std * args.alie_zmax
-        # bad_update_flat = -args.lr * bad_gradient_flat
-        # bad_gradient_layers = unflatten(bad_gradient_flat, grads_list[0])
-        # bad_update_layers = unflatten(bad_update_flat, update_list[0])
-
-        # # 批量更新恶意用户的梯度和更新量
-        # for user_idx in malicious_users:
-        #     for layer_idx in range(len(grads_list[user_idx])):
-        #         # 使用原地操作 copy_ 确保内存更新
-        #         grads_list[user_idx][layer_idx].copy_(bad_gradient_layers[layer_idx])
-        #         update_list[user_idx][layer_idx].copy_(bad_update_layers[layer_idx])
+        bad_gradient = gradient_mean - args.alie_zmax * gradient_std
+        bad_update = -args.lr * bad_gradient
+        for user_idx in malicious_users:
+            grads_list[user_idx] = bad_gradient
+            update_list[user_idx] = bad_update
 
     elif args.attack_type == "min-max":
-        flat_clients = torch.stack([flatten(g) for g in grads_list])
+        flat_clients = torch.stack([g for g in grads_list])
 
         dists = torch.cdist(flat_clients, flat_clients, p=1)
         max_dist = torch.max(dists)
 
-        benign_vector = flatten(gradient_mean)
-        #benign_vector = gradient_mean
-
         # perturbation vector: Inverse unit vector
-        deviation = - benign_vector/torch.norm(benign_vector)
+        deviation = - gradient_mean/torch.norm(gradient_mean)
 
         # if dev_type == 'unit_vec':
         #     deviation = model_re / torch.norm(model_re)  # unit vector, dir opp to good dir
@@ -127,48 +107,29 @@ def perturb_collusion(grads_list, update_list, malicious_users, root_grads, args
         #     deviation = torch.std(all_updates, 0)
 
         lamda = 40
-        # print(lamda)
         threshold_diff = 1e-5
         lamda_fail = lamda
         lamda_succ = 0
 
         while abs(lamda_succ - lamda) > threshold_diff:
-            mal_grad = (benign_vector + lamda * deviation)
+            mal_grad = (gradient_mean + lamda * deviation)
             distance = torch.norm((flat_clients - mal_grad), dim=1) ** 2
             max_d = torch.max(distance)
             
             if max_d <= max_dist:
-                print('successful lamda is ', lamda)
+                # print('successful lamda is ', lamda)
                 lamda_succ = lamda
                 lamda = lamda + lamda_fail / 2
             else:
                 lamda = lamda - lamda_fail / 2
-                print('continue')
 
             lamda_fail = lamda_fail / 2
 
-        unflatten(deviation, grads_list[0])
-
-        #noise = torch.normal(mean=0.0, std=1, size=m.shape)
-
-        # bad_gradient_flat = gradient_mean + args.min_max_scale * lamda_succ * deviation
-        # bad_update_flat = -args.lr * bad_gradient_flat
-        # bad_gradient_layers = unflatten(bad_gradient_flat, grads_list[0])
-        # bad_update_layers = unflatten(bad_update_flat, update_list[0])
-
-        # 批量更新恶意用户的梯度和更新量
-        # for user_idx in malicious_users:
-        #     for layer_idx in range(len(grads_list[user_idx])):
-        #         # 使用原地操作 copy_ 确保内存更新
-        #         grads_list[user_idx][layer_idx].copy_(bad_gradient_layers[layer_idx])
-        #         update_list[user_idx][layer_idx].copy_(bad_update_layers[layer_idx])
-        for idx in range(len(grads_list[0])):
-            bad_gradient = gradient_mean[idx] + args.min_max_scale * lamda_succ * deviation[idx]
-            bad_update = -args.lr * bad_gradient
-
-            for user_idx in malicious_users:
-                grads_list[user_idx][idx].copy_(bad_gradient)
-                update_list[user_idx][idx].copy_(bad_update)
+        bad_gradient = gradient_mean + args.min_max_scale * lamda_succ * deviation
+        bad_update = -args.lr * bad_gradient
+        for user_idx in malicious_users:
+            grads_list[user_idx] = bad_gradient
+            update_list[user_idx] = bad_update
 
     elif args.attack_type == "sine":
         """

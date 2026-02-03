@@ -32,7 +32,12 @@ def evaluate(net, dataset, args):
 
 def main():
     args = args_parser()
-    args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        args.device = torch.device('cuda')
+    elif torch.backends.mps.is_built():
+         args.device = torch.device('mps')
+    else:
+        args.device = torch.device('cpu')
     print(f"Running on {args.device}, Dataset: {args.dataset}, Algo: {args.agg_method}, Attack: {args.attack_type}")
 
     train_dataset, test_dataset, user_groups, root_data, num_channels = get_dataset(args)
@@ -60,7 +65,7 @@ def main():
     }
 
     for round_idx in range(args.rounds):
-        start_time = time.time()
+
         local_weights = []
         local_grads = []
         local_models = []
@@ -94,6 +99,8 @@ def main():
         if args.attack_type in ["alie", "min-max", "sine"]:
             perturb_collusion(local_grads, local_updates, malicious_users, root_grads, args)
 
+        start_time = time.time()
+
         # --- Aggregation ---
         if args.agg_method == "fedavg":
             agg_update = aggregate_fedavg(local_updates)
@@ -108,10 +115,10 @@ def main():
             #global_weights = aggregate_esfl(copy.deepcopy(local_models), copy.deepcopy(global_model), args)
             agg_update = aggregate_esfl2(local_updates, copy.deepcopy(global_model).to(args.device), args)
         elif args.agg_method == "my_algo":
-            agg_update = aggregate_my_algo2(local_updates, root_update, args)
+            agg_update = aggregate_my_algo(local_updates, root_update, args, malicious_users=list(malicious_users))
         else:
             raise ValueError("Unknown aggregation method")
-            
+
         # --- Global Update ---
         #if args.agg_method == "esfl":
         #
@@ -134,7 +141,7 @@ def main():
         global_model.float()
         # global_model.to(args.device)
         test_acc = evaluate(global_model, test_dataset, args)
-        print(f"Round {round_idx+1}/{args.rounds} | Accuracy: {test_acc:.2f}% | Time: {round_time:.2f}s")
+        print(f"Round:{round_idx+1}/{args.rounds}|Algo:{args.agg_method}|Attack:{args.attack_type}{args.mal_prop}|IID:{args.iid}|Accu:{test_acc:.2f}%|Time:{round_time:.2f}s")
         
         metrics['malicious_clients'].append(malicious_users)
         metrics['round'].append(round_idx+1)
@@ -144,8 +151,11 @@ def main():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     dist_str = "iid" if args.iid else f"noniid_alpha{args.alpha}"
-    file_name = f"{args.dataset}_{args.agg_method}_{args.attack_type}_mal{args.mal_prop}_{dist_str}_{timestamp}.csv"
-    
+    if args.agg_method == "my_algo":
+        file_name = f"{args.dataset}_{args.agg_method}_{args.attack_type}_mal{args.mal_prop}_{dist_str}_a{args.agg_a}_b{args.agg_b}_c{args.agg_c}_t{args.agg_T}_{timestamp}.csv"
+    else:  
+        file_name = f"{args.dataset}_{args.agg_method}_{args.attack_type}_mal{args.mal_prop}_{dist_str}_{timestamp}.csv"
+
     save_path = os.path.join(args.out_path, file_name)
     df = pd.DataFrame(metrics)
     df.to_csv(save_path, index=False)

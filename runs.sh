@@ -15,97 +15,101 @@ shift
 for method in "$@"
 do
     echo "algo: $method"
-	for attack in min-max; do
-		for pro in 0.5 0.4 0.3 0.2 0.1; do
-    		python main.py --name-dataset $DATASET --agg_method $method --attack_type $attack --mal_prop $pro --alpha 0.8
-		done
-	done
+	# for attack in min-max; do
+	# 	for pro in 0.1 0.2 0.3 0.4 0.5; do
+    # 		python main.py --dataset $DATASET --agg_method $method --attack_type $attack --mal_prop $pro --iid --lr 0.1 --rounds 300
+	# 		python main.py --dataset $DATASET --agg_method $method --attack_type $attack --mal_prop $pro --alpha 0.8 --lr 0.1 --rounds 300
+	# 	done
+	# done
 
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.1 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.2 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.3 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.4 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.5 --iid
+	python main.py --dataset $DATASET --agg_method $method --alpha 0.8 --rounds 300 --lr 0.1
+	python main.py --dataset $DATASET --agg_method $method --iid --rounds 300 --lr 0.1 
+
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.1 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.2 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.3 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.4 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.5 --iid
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.1 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.2 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.3 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.4 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.5 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.1 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.2 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.3 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.4 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.5 --iid
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.1 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.2 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.3 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.4 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.5 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.1 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.2 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.3 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.4 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.5 --iid
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.1 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.2 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.3 --iid
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.4 --iid
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.5 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.1 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.2 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.3 --iid
+    # python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.4 --iid
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.5 --iid
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --alpha 1 
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.1 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.2 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.3 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.4 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.5 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --alpha 1 
+	# python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.1 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.2 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.3 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.4 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.5 --alpha 1
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.1 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.2 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.3 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.4 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.5 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.1 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.2 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.3 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.4 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.5 --alpha 1
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.1 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.2 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.3 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.4 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.5 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.1 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.2 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.3 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.4 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.5 --alpha 1
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.1 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.2 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.3 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.4 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.5 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.1 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.2 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.3 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.4 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.5 --alpha 1
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.1 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.2 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.3 --alpha 1
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.4 --alpha 1
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.5 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.1 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.2 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.3 --alpha 1
+    # python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.4 --alpha 1
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.5 --alpha 1
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.1 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.2 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.3 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.4 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.5 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.1 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.2 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.3 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.4 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type label_flip --mal_prop 0.5 --alpha 0.5
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.1 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.2 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.3 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.4 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.5 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.1 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.2 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.3 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.4 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type gaussian_noise --mal_prop 0.5 --alpha 0.5
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.1 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.2 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.3 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.4 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.5 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.1 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.2 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.3 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.4 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type sign_flip --mal_prop 0.5 --alpha 0.5
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.1 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.2 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.3 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.4 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.5 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.1 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.2 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.3 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.4 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type alie --mal_prop 0.5 --alpha 0.5
 	
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.1 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.2 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.3 --alpha 0.5
-    # python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.4 --alpha 0.5
-	# python main.py --name-dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.5 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.1 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.2 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.3 --alpha 0.5
+    # python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.4 --alpha 0.5
+	# python main.py --dataset $DATASET --agg_method $method --attack_type free_rider --mal_prop 0.5 --alpha 0.5
 	
 done
 

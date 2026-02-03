@@ -35,7 +35,10 @@ def args_parser():
     parser.add_argument("--agg_method", type=str, default="my_algo",
                         choices=["fedavg", "krum", "fltrust","rfa", "esfl", "my_algo"],
                         help="aggregation algorithm")
-    parser.add_argument("--lamda", type=float, default=1, help="scaling para for clustering epsilon")
+    parser.add_argument("--agg_a", type=float, default=1, help="para for similarity score")
+    parser.add_argument("--agg_b", type=float, default=1/10, help="para for norm score")
+    parser.add_argument("--agg_c", type=float, default=1/5, help="para for size score")
+    parser.add_argument("--agg_T", type=float, default=0.05, help="temperature for softmax confidence")
     
     # Non-IID setting
     parser.add_argument("--iid", action='store_true', help="select to force iid data")

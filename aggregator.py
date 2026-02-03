@@ -2,16 +2,19 @@ import copy
 import torch
 import torch.nn.functional as F
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, OPTICS
 import hdbscan
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.neighbors import NearestNeighbors
 import numpy as np
 import sklearn.metrics.pairwise as smp
 from scipy.spatial.distance import cityblock, cdist, cosine
 from collections import Counter
+from sklearn.decomposition import PCA
+from utils import DBHC
 
 def flatten(grads):
     return torch.cat([g.view(-1) for g in grads])
@@ -24,8 +27,6 @@ def unflatten(flat_grad, ref_grads):
         recovered.append(flat_grad[offset:offset+numel].view(g.shape))
         offset += numel
     return recovered
-
-import torch
 
 def apply_pcgrad_for_two_grads(g_i_list, g_j_list):
     """
@@ -134,11 +135,21 @@ def aggregate_fltrust(client_updates, server_update, **kwargs):
 def aggregate_fltrust2(client_updates, server_update, **kwargs):
     """FLTrust"""
     norm_server = torch.norm(server_update)
+    client_updates_list = []
+    for i, update in enumerate(client_updates):
+        update_np = update.cpu().numpy()
+        if np.isnan(update_np).any():
+                print(f"Client {i} has NaN in updates! Skipping.")
+        else:
+            client_updates_list.append(update)
+        
+    if not client_updates_list:
+        return server_update
     
     weighted_sum = torch.zeros_like(server_update)
     total_weight = 0.0
     
-    for updates in client_updates:
+    for updates in client_updates_list:
         norm_client = torch.norm(updates)
         cos_sim = F.cosine_similarity(updates, server_update, dim=0)
         relu_sim = F.relu(cos_sim)
@@ -154,6 +165,7 @@ def aggregate_fltrust2(client_updates, server_update, **kwargs):
         final_update = server_update
 
     return final_update
+
 def aggregate_priroagg_rfa(client_grads, args, **kwargs):
     """
     PriRoAgg: Achieving Robust Model Aggregation With Minimum Privacy Leakage for Federated Learning
@@ -224,11 +236,12 @@ def average_weights(w, marks):
 
 def average_updates(local_updates, marks):
     num_participating_clients = np.sum(marks)
-    total_update = local_updates[0] * marks[0]
+    total_update = local_updates[0] * marks[0] if marks[0] > 0 else local_updates[1] * marks[1]
         
     # 5A. 遍历剩余客户端，进行累加
     for i in range(1, len(local_updates)):
-        total_update += local_updates[i] * marks[i]
+        if marks[i] > 0:
+            total_update += local_updates[i]
         
     # 6A. 计算平均值
     update_avg = total_update / num_participating_clients
@@ -319,7 +332,15 @@ def aggregate_esfl2(client_updates, global_model, args):
     PPRA: Privacy-Preserving Robust Aggregation
     """ 
     m = len(client_updates)
-    client_updates_numpy_list = [update.to(args.device).numpy() for update in client_updates]
+    scores = np.ones([m])
+    client_updates_numpy_list = []
+    for i, update in enumerate(client_updates):
+        update_np = update.cpu().numpy()
+        if np.isnan(update_np).any():
+            print(f"Client {i} has NaN in updates!")
+            scores[i] = 0
+        else:
+            client_updates_numpy_list.append(update_np)
     kmeans = KMeans(n_clusters=2, random_state=0).fit(client_updates_numpy_list)
     labels = kmeans.labels_
 
@@ -336,7 +357,6 @@ def aggregate_esfl2(client_updates, global_model, args):
 
     print(f"最佳簇: {good_cl}")
 
-    scores = np.ones([m])
     for i, l in enumerate(labels):
         if l != good_cl:
             scores[i] = 0
@@ -344,118 +364,6 @@ def aggregate_esfl2(client_updates, global_model, args):
     aggr_update = average_updates(client_updates, scores)
     
     return aggr_update
-
-
-
-def aggregate_my_algo(client_updates, server_update, args, **kwargs):
-    """
-    DBSCAN-based Trust Aggregation (DTA)
-    注意：在模拟中，我们直接使用明文梯度计算距离和求和。
-    在实际部署中，'clustering'步骤使用的是掩码梯度的距离 (Masked Dist)，
-    'aggregation'步骤使用的是同态去掩码后的总和 (Unmasked Sum)。
-    数学上，Given key diff, Masked Dist == Real Dist。
-    """
-    flat_server = flatten(server_update)
-    flat_clients = torch.stack([flatten(g) for g in client_updates])
-    
-    # 1. Dynamic Eps (base on dist median)
-    with torch.no_grad():
-        dists = torch.cdist(flat_clients, flat_clients, p=1)
-        median_dist = torch.median(dists)
-        # maybe we can adjust the epsilon with Non-IID args.alpha
-        if args.iid : dynamic_eps = median_dist.item() * 1.5
-        elif args.dataset == "mnist" : dynamic_eps = median_dist.item() * args.alpha
-        elif args.dataset == "cifar" : dynamic_eps = median_dist.item()
-        if dynamic_eps < 1e-3: dynamic_eps = 1.0
-            
-    # 2. HDBSCAN cluster
-    #    We can get the manhattan distance of masked grads with the key differences
-    #    dist_ij = ||masked_grad_i - masked_grad_j - F(key_i - key_j, b)||
-    X = flat_clients.detach().numpy()
-    #clustering = hdbscan.HDBSCAN(min_cluster_size=2, metric='manhattan').fit(X)
-    clustering = DBSCAN(eps=dynamic_eps, min_samples=2, metric='manhattan').fit(X)
-    labels = clustering.labels_
-    unique_labels = set(labels) - {-1}
-
-    if not unique_labels:
-        return server_update
-    
-    cluster_means = []
-    confidences = []
-    
-    # 3. trust evaluation
-    for label in unique_labels:
-        indices = [i for i, x in enumerate(labels) if x == label]
-        
-        # use the mean gradients to represent the cluster
-        # we can get the sum of masked grads with the keys' sum as:
-        # mean of cluster grads = 1/n * (sum_of_masked_grads - F(sum_of_keys, b))
-        cluster_vectors = flat_clients[indices]
-        mean_vec = torch.mean(cluster_vectors, dim=0)
-        
-        # cosine similarity with root gradient
-        sim = F.cosine_similarity(mean_vec, flat_server, dim=0)
-
-        # ReLU
-        conf = F.relu(sim)
-
-        conf = conf * len(indices)/args.num_clients  # weight by cluster size
-        
-        cluster_means.append(mean_vec)
-        confidences.append(conf)
-
-        print(f"label: {label} confidence: {conf}")
-        print(f"client indices: {indices}")
-    
-    # 4. weighted aggregation
-    conf_tensor = torch.stack(confidences)
-    total_conf = conf_tensor.sum()
-    
-    final_flat = torch.zeros_like(flat_server)
-    
-    if total_conf > 0.01:
-        # normaliztion the cluster confidence
-        normalized_confs = conf_tensor / total_conf
-        for i, mean_vec in enumerate(cluster_means):
-            final_flat += normalized_confs[i] * mean_vec
-    else:
-        # two possible reasons for this case (total_conf <= 0.01):
-        # 1. there are no benigh clusters,
-        # 2. the model has been already converaged, so that the gradients is too small to
-        #    calculate the cosine similarity,
-        # so we just return server model here.
-        final_flat = flat_server
-        
-    return unflatten(final_flat, server_update)
-
-# --- 辅助函数：根据 PyTorch 结构获取最后一层的索引和大小 ---
-def get_last_layer_info(global_model):
-    """返回最后一层参数在展平向量中的起始索引和长度"""
-    
-    # 获取参数列表
-    all_params = list(global_model.parameters())
-    if not all_params:
-        raise ValueError("Model has no parameters.")
-
-    # 找到最后一个参数 (通常是最后一层的偏置或权重)
-    last_param = all_params[-1]
-    
-    # 找到倒数第二个参数 (通常是最后一层的权重)
-    second_to_last_param = all_params[-2] 
-
-    # 确定要聚合的“最后一层权重”
-    # 在 PyTorch 中，参数通常是 [W_L-1, b_L-1, W_L, b_L]
-    # 我们通常取倒数第二个参数，即 W_L (最后一层的权重)
-    target_param = second_to_last_param 
-    target_param_flat_size = target_param.numel() # 元素总数
-    
-    # 计算它在整个展平向量中的起始索引
-    start_index = 0
-    # 累加到倒数第二个参数之前的所有参数大小
-    for param in all_params[:-2]:
-        start_index += param.numel()
-        
-    return start_index, target_param_flat_size
 
 def get_largest_cluster_label(clustering):
     """
@@ -591,29 +499,183 @@ def aggregate_my_algo2(client_updates, server_update, args, **kwargs):
     for i, mean_vec in enumerate(cluster_means):
         final_update += softmax_confs[i] * mean_vec
         print(f"Cluster {i} Softmax Weight: {softmax_confs[i]:.4f}")
+    
+    aggr_update_tensor = torch.tensor(final_update).to(torch.float32)
 
-    # total_conf = sum(confidences)
+    return aggr_update_tensor
 
-    # final_update = np.zeros_like(server_update_numpy)
+def k_medoids(X, n_clusters, max_iter=100, random_state=None):
+    rng = np.random.RandomState(random_state)
+    m = X.shape[0]
+    if m < n_clusters:
+        return np.arange(m)
+    
+    medoid_indices = rng.choice(m, n_clusters, replace=False)
+    medoids = X[medoid_indices]
+    labels = np.zeros(m)
+    
+    for _ in range(max_iter):
+        dists = cdist(X, medoids, metric='euclidean')
+        labels = np.argmin(dists, axis=1)
+        
+        new_medoid_indices = []
+        for k in range(n_clusters):
+            cluster_points_idx = np.where(labels == k)[0]
+            if len(cluster_points_idx) == 0:
+                new_medoid_indices.append(medoid_indices[k])
+                continue
+            
+            cluster_X = X[cluster_points_idx]
+            intra_dists = cdist(cluster_X, cluster_X, metric='euclidean')
+            sums = np.sum(intra_dists, axis=1)
+            best_idx_in_cluster = np.argmin(sums)
+            new_medoid_indices.append(cluster_points_idx[best_idx_in_cluster])
+        
+        new_medoid_indices = np.array(new_medoid_indices)
+        if np.all(new_medoid_indices == medoid_indices):
+            break
+        medoid_indices = new_medoid_indices
+        medoids = X[medoid_indices]
+        
+    return labels
 
-    # if total_conf > 0.1:
-    #     # normaliztion the cluster confidence
-    #     normalized_confs = confidences / total_conf
-    #     for i, mean_vec in enumerate(cluster_means):
-    #         final_update += normalized_confs[i] * mean_vec
-    # else:
-        # two possible reasons for this case (total_conf <= 0.01):
-        # 1. there are no benigh clusters,
-        # 2. the model has been already converaged, so that the gradients is too small to
-        #    calculate the cosine similarity,
-        # so we just return server model here.
-        # final_update = server_update_numpy
-        # max_cluster_label, count = get_largest_cluster_label(clustering)
-        # if count > args.num_clients / 2:
-        #     final_update = cluster_means[max_cluster_label]
-        # else:
-        #     final_update = server_update_numpy
+def aggregate_my_algo(client_updates, server_update, args, **kwargs):
+    """
+    DBHC-based Aggregation (aggregator_my_algo)
+    Replaces DBSCAN with DBHC for clustering.
+    Reference: aggregate_my_algo2
+    """
+    client_updates_numpy_list = []
+    
+    for i, update in enumerate(client_updates):
+        update_np = update.cpu().numpy()
+        if np.isnan(update_np).any():
+             print(f"Client {i} has NaN in updates! Skipping.")
+        else:
+            client_updates_numpy_list.append(update_np)
+            
+    if not client_updates_numpy_list:
+        return server_update
 
-    aggr_update_tensor = torch.tensor(final_update).to(torch.float64)
+    server_update_numpy = server_update.cpu().numpy()
+    
+    # Use n_clusters=None to trigger Auto-k logic and visualization
+    dbhc = DBHC(n_clusters=None, plot_merge_cost=True)
+    dbhc.fit(client_updates_numpy_list)
+    labels = dbhc.labels_
 
+
+    # # --- Clustering Structure Visualization (Sorted Distance Matrix) ---
+    # try:
+    #     dists = cdist(client_updates_numpy_list, client_updates_numpy_list, metric='cityblock')
+    #     median_dist = np.median(dists)
+    #     lamda = getattr(args, 'lamda', 1.0)
+    #     dynamic_eps = median_dist * lamda
+    #     if np.isnan(dynamic_eps):
+    #         dynamic_eps = 1.0
+        
+    #     dbscan_labels = DBSCAN(eps=dynamic_eps, min_samples=2, metric='manhattan').fit_predict(client_updates_numpy_list)
+        
+    #     kmeans = KMeans(n_clusters=2, random_state=0).fit(client_updates_numpy_list)
+    #     kmeans_labels = kmeans.labels_
+
+    #     data_matrix = np.array(client_updates_numpy_list)
+    #     dist_matrix = cdist(data_matrix, data_matrix, metric='euclidean')
+        
+    #     fig, axes = plt.subplots(1, 3, figsize=(24, 7))
+        
+    #     algorithms = [
+    #         ("DBHC", labels),
+    #         ("DBSCAN", dbscan_labels),
+    #         ("K-Means", kmeans_labels)
+    #     ]
+        
+    #     for ax, (algo_name, algo_labels) in zip(axes, algorithms):
+    #         sorted_idx = np.argsort(algo_labels)
+            
+    #         sorted_dist = dist_matrix[sorted_idx][:, sorted_idx]
+            
+    #         unique, counts = np.unique(algo_labels, return_counts=True)
+    #         stats_parts = []
+    #         for u, c in zip(unique, counts):
+    #             label_str = "Noise" if u == -1 else f"Clust {u}"
+    #             stats_parts.append(f"{label_str}:{c}")
+    #         stats_str = ", ".join(stats_parts)
+            
+    #         sns.heatmap(sorted_dist, ax=ax, cmap='viridis', square=True, 
+    #                     cbar=True, xticklabels=False, yticklabels=False)
+            
+    #         ax.set_title(f"{algo_name} Structure\n({stats_str})")
+    #         ax.set_ylabel("Clients (Sorted)")
+    #         ax.set_xlabel("Clients (Sorted)")
+            
+    #     plt.tight_layout()
+    #     plt.savefig("clustering_structure_heatmap.png")
+    #     plt.close()
+    #     print("Saved clustering structure heatmap to clustering_structure_heatmap.png")
+        
+    # except Exception as e:
+    #     print(f"Error during clustering comparison visualization: {e}")
+    # # --- Clustering Comparison Block End ---
+    
+    unique_labels = set(labels) - {-1}
+    
+    if not unique_labels:
+        print("DBHC found no clusters (all noise). Returning server update.")
+        return server_update
+        
+    cluster_means = []
+    raw_scores = []
+    
+    # Trust evaluation
+    for label in unique_labels:
+        indices = [i for i, x in enumerate(labels) if x == label]
+        
+        # Get updates belonging to this cluster
+        cluster_vectors = [client_updates_numpy_list[i] for i in indices]
+        mean_vec = np.mean(cluster_vectors, axis=0)
+        
+        # Calculate score (same as aggregate_my_algo2)
+        # 1. Cosine Similarity
+        # Note: cosine returns distance (1 - sim), so 1 - cosine is similarity
+        sim = 1 - cosine(mean_vec, server_update_numpy)
+        s_sim = 1 / (1 + np.exp(-args.agg_a * sim))
+        
+        # 2. Norm Score
+        cluster_norm = np.linalg.norm(mean_vec, axis=-1)
+        server_grad_norm = np.linalg.norm(server_update_numpy, axis=-1)
+        norm_ratio = cluster_norm / (server_grad_norm + 1e-9)
+        s_norm = np.exp(-args.agg_b * (np.abs(norm_ratio - 1)))
+        
+        # 3. Size Score
+        s_size = len(indices) / args.num_clients 
+        s_size = s_size ** args.agg_c
+        
+        score = s_sim * s_norm * s_size
+        
+        cluster_means.append(mean_vec)
+        raw_scores.append(score)
+        
+        print(f"DBHC Label: {label}, Score: {score:.4f}, Size: {len(indices)}")
+        print(f"cluster mean vector norm: {cluster_norm}")
+        print(f"server update norm: {server_grad_norm}")
+        print(f"s_sim: {s_sim} s_norm: {s_norm}")
+        print(f"client indices: {indices}")
+    # Weighted Aggregation
+    if not raw_scores:
+         return server_update
+
+    raw_scores = np.array(raw_scores)
+    T = args.agg_T
+    exp_scores = np.exp(raw_scores / T)
+    softmax_confs = exp_scores / np.sum(exp_scores)
+    
+    final_update = np.zeros_like(server_update_numpy)
+    
+    for i, mean_vec in enumerate(cluster_means):
+        weight = softmax_confs[i]
+        final_update += weight * mean_vec
+        print(f"Cluster {i} Weight: {weight:.4f}")
+        
+    aggr_update_tensor = torch.tensor(final_update).to(torch.float32)
     return aggr_update_tensor
